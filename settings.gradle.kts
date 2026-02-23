@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "xcanplayer_final2"
+rootProject.name = "xcanplayer"
 include(":app")
  

@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_dialog_rounded"
+    android:padding="15dp"> <TextView
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:text="스케줄 관리"
+    android:textSize="18sp"
+    android:textStyle="bold"
+    android:textColor="#222222"
+    android:gravity="center"
+    android:layout_marginBottom="15dp"/>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:weightSum="3"
+        android:layout_marginBottom="15dp">
+
+        <Button android:id="@+id/btnPreset1" android:layout_width="0dp" android:layout_weight="1" android:layout_height="45dp" android:text="🌅 새벽(5시)" android:textSize="12sp" android:textStyle="bold" android:layout_marginEnd="5dp" android:backgroundTint="#FF9800" android:padding="0dp"/>
+        <Button android:id="@+id/btnPreset2" android:layout_width="0dp" android:layout_weight="1" android:layout_height="45dp" android:text="🌿 생명(6시)" android:textSize="12sp" android:textStyle="bold" android:layout_marginEnd="5dp" android:backgroundTint="#4CAF50" android:padding="0dp"/>
+        <Button android:id="@+id/btnPreset3" android:layout_width="0dp" android:layout_weight="1" android:layout_height="45dp" android:text="📖 통독(8시)" android:textSize="12sp" android:textStyle="bold" android:backgroundTint="#2196F3" android:padding="0dp"/>
+    </LinearLayout>
+
+    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#DDDDDD" android:layout_marginBottom="15dp"/>
+
+    <EditText
+        android:id="@+id/etTitle"
+        android:layout_width="match_parent"
+        android:layout_height="45dp"
+        android:hint="제목 입력"
+        android:textSize="14sp"
+        android:padding="10dp"
+        android:background="@drawable/bg_input_field"
+        android:textColor="#000000"
+        android:textColorHint="#999999"
+        android:layout_marginBottom="10dp"/>
+
+    <EditText
+        android:id="@+id/etUrl"
+        android:layout_width="match_parent"
+        android:layout_height="45dp"
+        android:hint="URL (https://...)"
+        android:textSize="14sp"
+        android:padding="10dp"
+        android:background="@drawable/bg_input_field"
+        android:inputType="textUri"
+        android:textColor="#000000"
+        android:textColorHint="#999999"
+        android:layout_marginBottom="10dp"/>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="15dp">
+
+        <TextView
+            android:id="@+id/tvTimePicker"
+            android:layout_width="0dp"
+            android:layout_height="45dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_input_field"
+            android:text="시간 선택 (터치)"
+            android:gravity="center"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="#555555"
+            android:clickable="true"
+            android:focusable="true"/>
+
+        <View android:layout_width="10dp" android:layout_height="1dp"/>
+
+        <Button
+            android:id="@+id/btnAddSchedule"
+            android:layout_width="wrap_content"
+            android:layout_height="45dp"
+            android:text="➕ 추가"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#2962FF"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"/>
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="▼ 스케줄 목록"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:textColor="#555555"
+        android:layout_marginBottom="5dp"/>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#FFFFFF"
+        android:padding="5dp">
+
+        <LinearLayout
+            android:id="@+id/listContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </ScrollView>
+
+</LinearLayout>

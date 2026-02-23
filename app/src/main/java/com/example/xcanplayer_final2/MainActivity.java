@@ -1,594 +1,853 @@
 package com.example.xcanplayer_final2;
 
-import androidx.activity.OnBackPressedCallback;
-import androidx.appcompat.app.AlertDialog;
-import androidx.appcompat.app.AppCompatActivity;
-
-import android.annotation.SuppressLint;
+import android.app.AlertDialog;
+import android.app.TimePickerDialog;
+import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
+import android.content.res.Configuration;
+import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.SystemClock;
-import android.text.InputType;
 import android.text.TextUtils;
-import android.util.DisplayMetrics;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
-import android.view.animation.AlphaAnimation;
 import android.webkit.CookieManager;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.appcompat.app.AppCompatActivity;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
 
-    // UI
-    private WebView webview;
-    private LinearLayout controlPanel;
-    private Button btnRotate, btnLogin, btnSetting;
+    private WebView webView;
+    private FrameLayout fullscreenContainer;
+    private View customView;
+    private WebChromeClient.CustomViewCallback customViewCallback;
+    private float currentSpeed = 1.0f;
 
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    private final Runnable hideRunnable = () -> {
-        if (controlPanel != null && controlPanel.getVisibility() == View.VISIBLE) {
-            AlphaAnimation fade = new AlphaAnimation(1.0f, 0.0f);
-            fade.setDuration(180);
-            controlPanel.startAnimation(fade);
-            controlPanel.setVisibility(View.GONE);
+    private TextView btnSpeed;
+    private ImageButton btnSchedule, btnRotate;
+
+    private List<ScheduleItem> scheduleList = new ArrayList<>();
+    private Handler scheduleCheckHandler = new Handler(Looper.getMainLooper());
+
+    private static final String PRESET1_URL = "https://www.youtube.com/channel/UC9XJt_V-t6p9oO-iJjVw5_w";
+    private static final String PRESET2_URL = "https://www.youtube.com/results?search_query=생명의삶";
+    private static final String PRESET3_URL = "https://www.fondant.kr/series/00090228-5db3-dc44-3c29-52bcaf0002ce";
+
+    private String currentTargetUrl = PRESET3_URL;
+    private boolean wasOnLoginPage = false;
+
+    private static final String JS_SPEED = "javascript:(function() { window.androidSpeed = 1.0; setInterval(function() { var v = document.querySelector('video'); if(v && v.playbackRate != window.androidSpeed) v.playbackRate = window.androidSpeed; }, 1000); })();";
+
+    private static final String JS_MOUSE_HOVER = "javascript:(function() { " +
+            "document.addEventListener('touchstart', function(e) { " +
+            "  if (e.touches.length > 0) { " +
+            "    var touch = e.touches[0]; " +
+            "    var event = new MouseEvent('mousemove', { " +
+            "      'view': window, " +
+            "      'bubbles': true, " +
+            "      'cancelable': true, " +
+            "      'clientX': touch.clientX, " +
+            "      'clientY': touch.clientY " +
+            "    }); " +
+            "    e.target.dispatchEvent(event); " +
+            "  } " +
+            "}, true); " +
+            "})();";
+
+    // 유튜브 자동 클릭 & 풀화면 팽창 기능이 추가된 봇
+    private static final String JS_MASTER_BOT = "javascript:(function() { " +
+            "if(window.masterBotInterval) clearInterval(window.masterBotInterval); " +
+            "window.nextBtnSeenTime = 0; " +
+            "window.lastPlayClickTime = 0; " +
+            "window.cssFsApplied = false; " +
+            "window.currentVidUrl = ''; " +
+            "window.masterBotInterval = setInterval(function() { " +
+            "  var v = document.querySelector('video'); " +
+            "  var now = Date.now(); " +
+            "  var url = window.location.href; " +
+
+            "  if (v && v.src && v.dataset.autoUnmutedSrc !== v.src) { " +
+            "    v.muted = false; " +
+            "    v.volume = 1.0; " +
+            "    v.dataset.autoUnmutedSrc = v.src; " +
+            "    window.cssFsApplied = false; " +
+            "  } " +
+
+            "  function triggerClick(el) { " +
+            "    if(!el) return; " +
+            "    try { " +
+            "      el.click(); " +
+            "      var ev = new MouseEvent('click', {bubbles: true, cancelable: true, view: window}); " +
+            "      el.dispatchEvent(ev); " +
+            "    } catch(e){} " +
+            "  } " +
+
+            "  /* 유튜브 전용: 첫 영상 클릭 및 100% 풀화면 강제 팽창 */ " +
+            "  if (url.includes('youtube.com')) { " +
+            "    if (url.includes('results')) { " +
+            "      var links = document.querySelectorAll('ytd-video-renderer a#video-title, a.ytm-compact-video-renderer'); " +
+            "      if (links.length > 0 && (now - window.lastPlayClickTime > 4000)) { " +
+            "        triggerClick(links[0]); " +
+            "        window.lastPlayClickTime = now; " +
+            "      } " +
+            "    } else if (url.includes('watch')) { " +
+            "      if (v && v.paused && (now - window.lastPlayClickTime > 3000)) { " +
+            "        var p = v.play(); if(p) p.catch(function(){}); " +
+            "        window.lastPlayClickTime = now; " +
+            "      } " +
+            "      if (window.currentVidUrl !== url) { " +
+            "        window.cssFsApplied = false; " +
+            "        window.currentVidUrl = url; " +
+            "      } " +
+            "      if (!window.cssFsApplied && v && v.currentTime > 0.5) { " +
+            "        var s = document.createElement('style'); " +
+            "        s.innerHTML = 'ytd-masthead, #masthead-container, #secondary, #below, #comments, ytd-engagement-panel-section-list-renderer, ytm-header-bar, ytm-item-section-renderer, ytm-single-column-watch-next-results-renderer, .watch-below-the-player { display: none !important; } ' + " +
+            "                      'body, html, ytd-app, #page-manager, ytm-app { padding: 0 !important; margin: 0 !important; overflow: hidden !important; background: black !important; } ' + " +
+            "                      'ytd-watch-flexy, #columns, #primary, #primary-inner, #player, #player-container-outer, #player-container-inner, .html5-video-player, #player-container-id, .player-size, .player-container, ytm-custom-control { ' + " +
+            "                      '  position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important; ' + " +
+            "                      '  width: 100vw !important; height: 100vh !important; ' + " +
+            "                      '  max-width: 100vw !important; max-height: 100vh !important; ' + " +
+            "                      '  z-index: 999999 !important; background: black !important; margin: 0 !important; padding: 0 !important; ' + " +
+            "                      '} ' + " +
+            "                      'video { width: 100vw !important; height: 100vh !important; object-fit: contain !important; z-index: 999999 !important; margin: 0 !important; padding: 0 !important; }'; " +
+            "        document.head.appendChild(s); " +
+            "        window.cssFsApplied = true; " +
+            "      } " +
+            "    } " +
+            "    return; " +
+            "  } " +
+
+            "  /* 퐁당 전용 로직 */ " +
+            "  var tags = document.querySelectorAll('button, a, div, span, p'); " +
+            "  var nextTags = []; " +
+            "  var playTags = []; " +
+
+            "  for (var i = 0; i < tags.length; i++) { " +
+            "    var txt = tags[i].innerText; " +
+            "    if (txt && txt.length < 30 && !txt.includes('구독')) { " +
+            "      var ct = txt.replace(/\\s/g, ''); " +
+            "      if (ct.includes('다음회차')) { " +
+            "        nextTags.push(tags[i]); " +
+            "      } else if (ct.includes('이어보기') || ct.includes('재생하기') || ct.includes('편재생') || ct.includes('첫화보기')) { " +
+            "        playTags.push(tags[i]); " +
+            "      } " +
+            "    } " +
+            "  } " +
+
+            "  if (nextTags.length > 0) { " +
+            "    if (window.nextBtnSeenTime === 0) { " +
+            "      window.nextBtnSeenTime = now; " +
+            "    } else if (now - window.nextBtnSeenTime >= 15000) { " +
+            "      for(var j = nextTags.length - 1; j >= 0; j--) { triggerClick(nextTags[j]); } " +
+            "      window.nextBtnSeenTime = 0; " +
+            "      window.lastPlayClickTime = now; " +
+            "    } " +
+            "    return; " +
+            "  } else { " +
+            "    window.nextBtnSeenTime = 0; " +
+            "  } " +
+
+            "  if (playTags.length > 0) { " +
+            "    if (now - window.lastPlayClickTime > 4000) { " +
+            "      for(var k = playTags.length - 1; k >= 0; k--) { triggerClick(playTags[k]); } " +
+            "      window.lastPlayClickTime = now; " +
+            "    } " +
+            "  } else if (v && v.paused && v.currentTime < 1.0) { " +
+            "    if (now - window.lastPlayClickTime > 4000) { " +
+            "      var p = v.play(); if(p !== undefined) p.catch(function(e){}); " +
+            "      window.lastPlayClickTime = now; " +
+            "    } " +
+            "  } " +
+            "}, 1000); " +
+            "})();";
+
+    public static class ScheduleItem {
+        int hour, minute;
+        String title;
+        String url;
+
+        public ScheduleItem(int hour, int minute, String title, String url) {
+            this.hour = hour;
+            this.minute = minute;
+            this.title = title;
+            this.url = url;
         }
-    };
-
-    private boolean isLandscape = true;
-    private boolean isLoginFlow = false;
-    private boolean isLoggedIn = false;
-
-    private long lastHoverInjectMs = 0L;
-    private static final long HOVER_THROTTLE_MS = 40;
-
-    private static final String PREFS_NAME = "BibleAppPrefs";
-    private static final String KEY_SCHEDULE = "schedule_json";
-    private static final String KEY_LOGGED_IN = "logged_in";
-
-    private static final String BASE_URL = "https://www.fondant.kr";
-    private static final String FONDANT_LOGIN_URL = "https://www.fondant.kr/sign/in";
-    private static final String YOUTUBE_LIVE_URL = "https://www.youtube.com/@suwondongbu/live";
-
-    // Presets
-    private static final int PRESET1_H = 5; private static final String PRESET1_T = "새벽예배"; private static final String PRESET1_U = "https://www.fondant.kr/series/00090200-0000-0000-0000-000000001088";
-    private static final int PRESET2_H = 6; private static final String PRESET2_T = "생명의삶"; private static final String PRESET2_U = "https://www.fondant.kr/series/00090200-0000-0000-0000-00000000071b";
-    private static final int PRESET3_H = 8; private static final String PRESET3_T = "성경통독"; private static final String PRESET3_U = "https://www.fondant.kr/series/00090228-5db3-dc44-3c29-52bcaf0002ce";
-
-    static class ScheduleItem {
-        int hour; String title; String url;
-        ScheduleItem(int hour, String title, String url) { this.hour = hour; this.title = title; this.url = url; }
     }
 
-    // 로그인 확인 스크립트
-    private static final String JS_GUESS_LOGGED_IN =
-            "(function(){try{"
-                    + "var txt=(document.body && (document.body.innerText||''))||'';"
-                    + "if(txt.indexOf('로그아웃')>-1 || txt.indexOf('마이페이지')>-1 || txt.indexOf('My')>-1 || txt.indexOf('프로필')>-1 || txt.indexOf('내 정보')>-1) return true;"
-                    + "var ck=(document.cookie||'').toLowerCase();"
-                    + "if(ck.indexOf('token')>-1||ck.indexOf('session')>-1||ck.indexOf('auth')>-1) return true;"
-                    + "return false;"
-                    + "}catch(e){return false;}})()";
+    private boolean isLoginPage(String url) {
+        if (url == null) return false;
+        String lowerUrl = url.toLowerCase();
+        return lowerUrl.contains("login") || lowerUrl.contains("member")
+                || lowerUrl.contains("oauth") || lowerUrl.contains("account")
+                || lowerUrl.contains("nid.naver.com") || lowerUrl.contains("accounts.google.com")
+                || lowerUrl.contains("auth") || lowerUrl.contains("join")
+                || lowerUrl.contains("kakaocorp") || lowerUrl.contains("kauth");
+    }
 
-    // 자동재생 엔진
-    private static final String JS_AUTO_MONITOR =
-            "(function(){"
-                    + "if(window.__xcan_monitor) return;"
-                    + "window.__xcan_monitor = true;"
-                    + "var style = document.createElement('style');"
-                    + "style.innerHTML = 'html, body { background: black !important; } video { width: 100vw !important; height: 100vh !important; object-fit: contain !important; } .app-banner { display: none !important; }';"
-                    + "document.head.appendChild(style);"
-                    + "setInterval(function(){"
-                    + "   var v = document.querySelector('video');"
-                    + "   if(!v) {"
-                    + "       var btns = document.querySelectorAll('button, a, div[role=\"button\"]');"
-                    + "       for(var i=0; i<btns.length; i++){"
-                    + "           var t = (btns[i].innerText || '').trim();"
-                    + "           if(/재생|시청|이어보기|Play|Continue/.test(t)) { btns[i].click(); return; }"
-                    + "       }"
-                    + "       return;"
-                    + "   }"
-                    + "   if (v.ended || (v.duration > 0 && v.currentTime >= v.duration - 2)) {"
-                    + "       var all = document.querySelectorAll('button, a, span, div[role=\"button\"]');"
-                    + "       for (var i = 0; i < all.length; i++) {"
-                    + "           var txt = (all[i].innerText || '').trim();"
-                    + "           if (txt.indexOf('다음') > -1 || txt.indexOf('Next') > -1 || txt.indexOf('Play next') > -1) {"
-                    + "               if(all[i].href) { location.href = all[i].href; } else { all[i].click(); }"
-                    + "               return;"
-                    + "           }"
-                    + "       }"
-                    + "   }"
-                    + "   if(v.paused && v.currentTime < 2) {"
-                    + "       v.muted = true;"
-                    + "       var p = v.play();"
-                    + "       if(p && p.then) {"
-                    + "           p.then(function(){ v.muted = false; }).catch(function(){ v.play(); });"
-                    + "       } else { v.muted = false; }"
-                    + "   }"
-                    + "}, 1000);"
-                    + "})();";
+    private boolean isVideoPage(String url) {
+        if (url == null) return false;
+        String lowerUrl = url.toLowerCase();
+        return lowerUrl.contains("series") || lowerUrl.contains("watch")
+                || lowerUrl.contains("youtube") || lowerUrl.contains("results")
+                || lowerUrl.contains("play") || lowerUrl.contains("vod") || lowerUrl.contains("content");
+    }
+
+    private boolean isHomePage(String url) {
+        if (url == null) return false;
+        String lowerUrl = url.toLowerCase();
+        if (lowerUrl.contains("login") || lowerUrl.contains("oauth") || lowerUrl.contains("auth")) return false;
+
+        String cleanUrl = lowerUrl.split("\\?")[0].replaceAll("/$", "");
+        return cleanUrl.equals("https://www.fondant.kr") ||
+                cleanUrl.equals("https://fondant.kr") ||
+                cleanUrl.endsWith("fondant.kr/main");
+    }
+
+    private void setImmersiveMode(boolean enable) {
+        View decorView = getWindow().getDecorView();
+        if (enable) {
+            decorView.setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_FULLSCREEN
+            );
+        } else {
+            decorView.setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_VISIBLE
+            );
+        }
+    }
+
+    private void checkAndApplyOrientation(String url) {
+        if (url == null) return;
+        if (isVideoPage(url)) {
+            if (getResources().getConfiguration().orientation != Configuration.ORIENTATION_LANDSCAPE) {
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+            }
+            setImmersiveMode(true);
+        } else {
+            if (getResources().getConfiguration().orientation != Configuration.ORIENTATION_PORTRAIT) {
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+            }
+            setImmersiveMode(false);
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        setContentView(R.layout.activity_main);
         if (getSupportActionBar() != null) getSupportActionBar().hide();
 
-        setContentView(R.layout.activity_main);
-
-        webview = findViewById(R.id.webview);
-        controlPanel = findViewById(R.id.controlPanel);
+        webView = findViewById(R.id.webView);
+        fullscreenContainer = findViewById(R.id.fullscreen_container);
+        btnSpeed = findViewById(R.id.btnSpeed);
+        btnSchedule = findViewById(R.id.btnSchedule);
         btnRotate = findViewById(R.id.btnRotate);
-        btnLogin = findViewById(R.id.btnLogin);
-        btnSetting = findViewById(R.id.btnSetting);
 
-        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        isLoggedIn = prefs.getBoolean(KEY_LOGGED_IN, false);
-
-        enableTouchAsMouseHover();
-        setupWebView();
-
-        List<ScheduleItem> list = loadScheduleFromPrefs();
-        ensureDefaultPresets(list);
-        saveScheduleToPrefs(list);
-
-        loadTargetVideoFromSchedule();
-
-        btnRotate.setOnClickListener(v -> toggleRotation());
-
-        // 설정 버튼: 클릭 시 세로모드 -> 다이얼로그 표시
-        btnSetting.setOnClickListener(v -> {
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-            isLandscape = false;
-            handler.postDelayed(this::showAdminDialog, 200);
-        });
-
-        btnLogin.setOnClickListener(v -> onLoginClicked());
-
-        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
-            long last = 0L;
-            @Override
-            public void handleOnBackPressed() {
-                if (controlPanel != null && controlPanel.getVisibility() == View.VISIBLE) {
-                    controlPanel.setVisibility(View.GONE);
-                    return;
-                }
-                if (webview != null && webview.canGoBack()) {
-                    webview.goBack();
-                    return;
-                }
-                long now = System.currentTimeMillis();
-                if (now - last < 2000) finish();
-                else {
-                    last = now;
-                    Toast.makeText(MainActivity.this, "한 번 더 누르면 종료됩니다.", Toast.LENGTH_SHORT).show();
-                }
-            }
-        });
-
-        showPanelForce();
-    }
-
-    private void onLoginClicked() {
-        if (isLoggedIn) {
-            Toast.makeText(this, "이미 로그인 상태입니다. (설정값)", Toast.LENGTH_SHORT).show();
-            webview.evaluateJavascript(JS_GUESS_LOGGED_IN, value -> {});
-            return;
+        if (btnRotate != null && btnRotate.getParent() != null) {
+            ((View) btnRotate.getParent()).bringToFront();
         }
 
-        webview.evaluateJavascript(JS_GUESS_LOGGED_IN, value -> {
-            if ("true".equalsIgnoreCase(value)) {
-                setLoggedIn(true);
-                Toast.makeText(this, "이미 로그인되어 있습니다.", Toast.LENGTH_SHORT).show();
-            } else {
-                isLoginFlow = true;
+        loadScheduleData();
+
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setDatabaseEnabled(true);
+        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setUseWideViewPort(true);
+        settings.setLoadWithOverviewMode(true);
+        settings.setBuiltInZoomControls(true);
+        settings.setDisplayZoomControls(false);
+        settings.setTextZoom(125);
+
+        settings.setJavaScriptCanOpenWindowsAutomatically(true);
+        settings.setSupportMultipleWindows(true);
+        settings.setUserAgentString("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+
+        CookieManager cookieManager = CookieManager.getInstance();
+        cookieManager.setAcceptCookie(true);
+        cookieManager.setAcceptThirdPartyCookies(webView, true);
+
+        setImmersiveMode(true);
+
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onShowCustomView(View view, CustomViewCallback callback) {
+                customView = view;
+                customViewCallback = callback;
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                fullscreenContainer.addView(view);
+                fullscreenContainer.setVisibility(View.VISIBLE);
+                webView.setVisibility(View.GONE);
+
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+                setImmersiveMode(true);
+
+                if (btnRotate != null && btnRotate.getParent() != null) {
+                    ((View) btnRotate.getParent()).bringToFront();
+                }
+            }
+
+            @Override
+            public void onHideCustomView() {
+                fullscreenContainer.removeView(customView);
+                customView = null;
+                fullscreenContainer.setVisibility(View.GONE);
+                webView.setVisibility(View.VISIBLE);
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                if (customViewCallback != null) customViewCallback.onCustomViewHidden();
+
+                if (webView != null) {
+                    checkAndApplyOrientation(webView.getUrl());
+                }
+            }
+
+            @Override
+            public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, android.os.Message resultMsg) {
+                WebView newWebView = new WebView(MainActivity.this);
+                WebSettings newSettings = newWebView.getSettings();
+                newSettings.setJavaScriptEnabled(true);
+                newSettings.setDomStorageEnabled(true);
+                newSettings.setDatabaseEnabled(true);
+                newSettings.setJavaScriptCanOpenWindowsAutomatically(true);
+                newSettings.setSupportMultipleWindows(true);
+                newSettings.setUserAgentString(view.getSettings().getUserAgentString());
+
+                CookieManager.getInstance().setAcceptThirdPartyCookies(newWebView, true);
+
+                final android.app.Dialog popupDialog = new android.app.Dialog(MainActivity.this, android.R.style.Theme_Light_NoTitleBar_Fullscreen);
+                popupDialog.setContentView(newWebView);
+
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-                isLandscape = false;
-                webview.loadUrl(FONDANT_LOGIN_URL);
+                setImmersiveMode(false);
+                popupDialog.show();
+
+                newWebView.setWebChromeClient(new WebChromeClient() {
+                    @Override
+                    public void onCloseWindow(WebView window) {
+                        popupDialog.dismiss();
+                        CookieManager.getInstance().flush();
+
+                        if (MainActivity.this.webView != null) {
+                            if (MainActivity.this.wasOnLoginPage && MainActivity.this.currentTargetUrl != null) {
+                                MainActivity.this.wasOnLoginPage = false;
+                                MainActivity.this.webView.loadUrl(MainActivity.this.currentTargetUrl);
+                            }
+                            checkAndApplyOrientation(MainActivity.this.webView.getUrl());
+                        }
+                    }
+                });
+
+                newWebView.setWebViewClient(new WebViewClient() {
+                    @Override
+                    public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                        String url = request.getUrl().toString();
+                        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                            try {
+                                Intent intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
+                                if (intent.resolveActivity(getPackageManager()) != null) {
+                                    startActivity(intent);
+                                    return true;
+                                } else {
+                                    String packageName = intent.getPackage();
+                                    if (packageName != null) {
+                                        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + packageName)));
+                                        return true;
+                                    }
+                                }
+                            } catch (Exception e) {}
+                            return true;
+                        }
+                        return false;
+                    }
+
+                    @Override
+                    public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                        if (url != null && (url.equals("https://www.fondant.kr/") || url.equals("https://fondant.kr/") || url.endsWith("fondant.kr/main"))) {
+                            CookieManager.getInstance().flush();
+                            popupDialog.dismiss();
+                            if (MainActivity.this.webView != null) {
+                                MainActivity.this.wasOnLoginPage = false;
+                                MainActivity.this.webView.loadUrl(currentTargetUrl);
+                            }
+                        }
+                    }
+                });
+
+                WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
+                transport.setWebView(newWebView);
+                resultMsg.sendToTarget();
+                return true;
             }
         });
-    }
 
-    private void setLoggedIn(boolean loggedIn) {
-        isLoggedIn = loggedIn;
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putBoolean(KEY_LOGGED_IN, loggedIn).apply();
-    }
-
-    private boolean isLoginUrl(String url) {
-        if (url == null) return false;
-        return url.contains("/sign/in") || url.contains("/login") || url.contains("kakao") || url.contains("naver");
-    }
-
-    private boolean isHomeUrl(String url) {
-        if (url == null) return false;
-        return url.equals(BASE_URL) || url.equals(BASE_URL + "/") || url.contains("fondant.kr/main");
-    }
-
-    @SuppressLint("SetJavaScriptEnabled")
-    private void setupWebView() {
-        WebSettings s = webview.getSettings();
-        s.setJavaScriptEnabled(true);
-        s.setDomStorageEnabled(true);
-        s.setMediaPlaybackRequiresUserGesture(false);
-        s.setUseWideViewPort(true);
-        s.setLoadWithOverviewMode(true);
-        s.setUserAgentString("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36");
-
-        CookieManager cm = CookieManager.getInstance();
-        cm.setAcceptCookie(true);
-        cm.setAcceptThirdPartyCookies(webview, true);
-
-        webview.setWebViewClient(new WebViewClient() {
+        webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
-                return url.startsWith("intent:") || url.contains("play.google.com");
+                if (url.startsWith("http://") || url.startsWith("https://")) {
+                    return false;
+                }
+                try {
+                    Intent intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
+                    if (intent.resolveActivity(getPackageManager()) != null) {
+                        startActivity(intent);
+                        return true;
+                    } else {
+                        String packageName = intent.getPackage();
+                        if (packageName != null) {
+                            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + packageName)));
+                            return true;
+                        }
+                    }
+                } catch (Exception e) {}
+                return true;
+            }
+
+            private void handleRouting(WebView view, String url) {
+                if (url == null) return;
+                if (isLoginPage(url)) {
+                    wasOnLoginPage = true;
+                } else if (isHomePage(url)) {
+                    if (wasOnLoginPage) {
+                        wasOnLoginPage = false;
+                        if (currentTargetUrl != null && !currentTargetUrl.isEmpty() && isVideoPage(currentTargetUrl)) {
+                            view.loadUrl(currentTargetUrl);
+                        }
+                    }
+                } else if (isVideoPage(url)) {
+                    wasOnLoginPage = false;
+                    currentTargetUrl = url;
+                }
+            }
+
+            @Override
+            public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                super.onPageStarted(view, url, favicon);
+                checkAndApplyOrientation(url);
+                handleRouting(view, url);
+            }
+
+            @Override
+            public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
+                super.doUpdateVisitedHistory(view, url, isReload);
+                checkAndApplyOrientation(url);
+                handleRouting(view, url);
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
-                if (isLoginUrl(url)) {
-                    isLoginFlow = true;
-                    if (isLandscape) {
-                        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-                        isLandscape = false;
-                    }
-                    return;
-                }
-                if (isLoginFlow && isHomeUrl(url)) {
-                    isLoginFlow = false;
-                    setLoggedIn(true);
-                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-                    isLandscape = true;
-                    Toast.makeText(MainActivity.this, "로그인 완료", Toast.LENGTH_SHORT).show();
-                    loadTargetVideoFromSchedule();
-                    return;
-                }
-                if (isLoginFlow) {
-                    isLoginFlow = false;
-                    setLoggedIn(true);
-                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-                    isLandscape = true;
-                    loadTargetVideoFromSchedule();
-                    return;
-                }
-                if (isHomeUrl(url)) {
-                    loadTargetVideoFromSchedule();
-                    return;
-                }
-                if (url.contains("/series/") || url.contains("episode") || url.contains("category=episode")) {
-                    view.evaluateJavascript(JS_AUTO_MONITOR, null);
+                webView.evaluateJavascript(JS_SPEED, null);
+                webView.evaluateJavascript(JS_MOUSE_HOVER, null);
+
+                if (url != null && isVideoPage(url)) {
+                    webView.evaluateJavascript(JS_MASTER_BOT, null);
                 }
             }
         });
-    }
 
-    private void loadTargetVideoFromSchedule() {
-        String target = buildTargetUrlForNow();
-        if (TextUtils.isEmpty(target)) {
-            Toast.makeText(this, "스케줄이 없습니다. 설정에서 추가해주세요.", Toast.LENGTH_LONG).show();
-            showAdminDialog();
-            return;
-        }
-        webview.loadUrl(target);
-    }
+        btnSpeed.setOnClickListener(v -> {
+            if (currentSpeed >= 2.0f) currentSpeed = 1.0f;
+            else currentSpeed += 0.25f;
+            btnSpeed.setText(currentSpeed + "x");
+            Toast.makeText(this, "속도: " + currentSpeed + "x", Toast.LENGTH_SHORT).show();
+            webView.evaluateJavascript("window.androidSpeed = " + currentSpeed + ";", null);
+        });
 
-    private String buildTargetUrlForNow() {
-        Calendar cal = Calendar.getInstance();
-        int day = cal.get(Calendar.DAY_OF_WEEK);
-        int hour = cal.get(Calendar.HOUR_OF_DAY);
+        btnSchedule.setOnClickListener(v -> showScheduleDialog());
 
-        if (day == Calendar.SUNDAY && (hour >= 10 && hour <= 12)) {
-            return YOUTUBE_LIVE_URL;
-        }
-
-        List<ScheduleItem> list = loadScheduleFromPrefs();
-        if (list.isEmpty()) return null;
-
-        list.sort(Comparator.comparingInt(o -> o.hour));
-        ScheduleItem target = list.get(list.size() - 1);
-        for (ScheduleItem i : list) if (i.hour <= hour) target = i;
-
-        String u = target.url;
-        if (u != null && !u.contains("category=episode")) {
-            u += (u.contains("?") ? "&" : "?") + "category=episode";
-        }
-        return u;
-    }
-
-    private void ensureDefaultPresets(List<ScheduleItem> list) {
-        boolean has5 = false, has6 = false, has8 = false;
-        for (ScheduleItem s : list) {
-            if (s.hour == PRESET1_H) has5 = true;
-            if (s.hour == PRESET2_H) has6 = true;
-            if (s.hour == PRESET3_H) has8 = true;
-        }
-        if (!has5) list.add(new ScheduleItem(PRESET1_H, PRESET1_T, PRESET1_U));
-        if (!has6) list.add(new ScheduleItem(PRESET2_H, PRESET2_T, PRESET2_U));
-        if (!has8) list.add(new ScheduleItem(PRESET3_H, PRESET3_T, PRESET3_U));
-    }
-
-    private List<ScheduleItem> loadScheduleFromPrefs() {
-        SharedPreferences p = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        String j = p.getString(KEY_SCHEDULE, "");
-        List<ScheduleItem> l = new ArrayList<>();
-        try {
-            if (!TextUtils.isEmpty(j)) {
-                JSONArray a = new JSONArray(j);
-                for (int i = 0; i < a.length(); i++) {
-                    JSONObject o = a.getJSONObject(i);
-                    l.add(new ScheduleItem(o.getInt("hour"), o.getString("title"), o.getString("url")));
-                }
+        btnRotate.setOnClickListener(v -> {
+            int currentOrientation = getResources().getConfiguration().orientation;
+            if (currentOrientation == Configuration.ORIENTATION_LANDSCAPE) {
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+                setImmersiveMode(false);
+            } else {
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+                setImmersiveMode(true);
             }
-        } catch (Exception ignored) {}
-        return l;
+        });
+
+        currentTargetUrl = PRESET3_URL;
+        webView.loadUrl(currentTargetUrl);
+        startScheduleChecker();
     }
 
-    private void saveScheduleToPrefs(List<ScheduleItem> l) {
-        try {
-            JSONArray a = new JSONArray();
-            for (ScheduleItem i : l) {
-                JSONObject o = new JSONObject();
-                o.put("hour", i.hour);
-                o.put("title", i.title);
-                o.put("url", i.url);
-                a.put(o);
-            }
-            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                    .putString(KEY_SCHEDULE, a.toString())
-                    .apply();
-        } catch (Exception ignored) {}
+    @Override
+    protected void onPause() {
+        super.onPause();
+        CookieManager.getInstance().flush();
     }
 
-    private void showAdminDialog() {
-        final List<ScheduleItem> temp = loadScheduleFromPrefs();
-        ensureDefaultPresets(temp);
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (webView != null) {
+            checkAndApplyOrientation(webView.getUrl());
+        }
+    }
 
-        // 전체 화면 레이아웃
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(20, 20, 20, 20);
+    private void showScheduleDialog() {
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+        setImmersiveMode(false);
 
-        // 1. 프리셋 버튼
-        LinearLayout presetRow = new LinearLayout(this);
-        presetRow.setOrientation(LinearLayout.HORIZONTAL);
-        presetRow.setGravity(Gravity.CENTER_HORIZONTAL);
-        presetRow.setPadding(0, 0, 0, 10);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        ScrollView scrollView = new ScrollView(this);
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(50, 40, 50, 40);
+        layout.setBackgroundColor(Color.WHITE);
 
-        final EditText etHour = new EditText(this);
-        etHour.setHint("시(0~23)");
-        etHour.setInputType(InputType.TYPE_CLASS_NUMBER);
-        etHour.setTextSize(14);
-        etHour.setGravity(Gravity.CENTER);
+        TextView titleView = new TextView(this);
+        titleView.setText("스케줄 관리");
+        titleView.setTextSize(24);
+        titleView.setTypeface(null, Typeface.BOLD);
+        titleView.setGravity(Gravity.CENTER);
+        titleView.setTextColor(Color.BLACK);
+        layout.addView(titleView);
+        layout.addView(createSpace(30));
 
-        final EditText etTitle = new EditText(this);
-        etTitle.setHint("제목");
-        etTitle.setTextSize(14);
+        LinearLayout presetLayout = new LinearLayout(this);
+        presetLayout.setOrientation(LinearLayout.HORIZONTAL);
 
-        final EditText etUrl = new EditText(this);
-        etUrl.setHint("URL (https://...)");
-        etUrl.setTextSize(14);
+        final EditText inputTitle = new EditText(this);
+        final EditText inputUrl = new EditText(this);
+        final Button[] btnTimeSelect = {null};
+        final int[] selectedTime = { -1, -1 };
 
-        Button b1 = makeSmallPresetBtn("🌅 새벽", 14);
-        b1.setOnClickListener(v -> { etHour.setText(String.valueOf(PRESET1_H)); etTitle.setText(PRESET1_T); etUrl.setText(PRESET1_U); });
-        Button b2 = makeSmallPresetBtn("🌿 생명", 14);
-        b2.setOnClickListener(v -> { etHour.setText(String.valueOf(PRESET2_H)); etTitle.setText(PRESET2_T); etUrl.setText(PRESET2_U); });
-        Button b3 = makeSmallPresetBtn("📖 통독", 14);
-        b3.setOnClickListener(v -> { etHour.setText(String.valueOf(PRESET3_H)); etTitle.setText(PRESET3_T); etUrl.setText(PRESET3_U); });
+        presetLayout.addView(createStyledButton("🌅 새벽(5시)", "#FFA726", v -> {
+            inputTitle.setText("새벽예배");
+            inputUrl.setText(PRESET1_URL);
+            selectedTime[0] = 5; selectedTime[1] = 0;
+            if(btnTimeSelect[0] != null) btnTimeSelect[0].setText("05:00");
+        }));
+        presetLayout.addView(createSpaceHorizontal(15));
 
-        presetRow.addView(b1); presetRow.addView(space(10));
-        presetRow.addView(b2); presetRow.addView(space(10));
-        presetRow.addView(b3);
-        root.addView(presetRow);
+        presetLayout.addView(createStyledButton("🌿 생명(6시)", "#66BB6A", v -> {
+            inputTitle.setText("생명의삶");
+            inputUrl.setText(PRESET2_URL);
+            selectedTime[0] = 6; selectedTime[1] = 0;
+            if(btnTimeSelect[0] != null) btnTimeSelect[0].setText("06:00");
+        }));
+        presetLayout.addView(createSpaceHorizontal(15));
 
-        // 2. 입력 영역
-        LinearLayout inputRow = new LinearLayout(this);
-        inputRow.setOrientation(LinearLayout.HORIZONTAL);
-        inputRow.setGravity(Gravity.CENTER_VERTICAL);
+        presetLayout.addView(createStyledButton("📖 통독(8시)", "#42A5F5", v -> {
+            inputTitle.setText("성경통독");
+            inputUrl.setText(PRESET3_URL);
+            selectedTime[0] = 8; selectedTime[1] = 0;
+            if(btnTimeSelect[0] != null) btnTimeSelect[0].setText("08:00");
+        }));
 
-        LinearLayout.LayoutParams hourParams = new LinearLayout.LayoutParams(dpToPx(100), LinearLayout.LayoutParams.WRAP_CONTENT);
-        etHour.setLayoutParams(hourParams);
+        layout.addView(presetLayout);
+        layout.addView(createSpace(30));
 
-        Button add = new Button(this);
-        add.setText("추가 / 수정");
-        add.setTextSize(14);
+        inputTitle.setHint("제목 입력");
+        inputUrl.setHint("URL (https://...) 붙여넣기");
 
-        inputRow.addView(etHour);
-        inputRow.addView(space(20));
-        inputRow.addView(add);
-        root.addView(inputRow);
+        inputTitle.setTextColor(Color.BLACK);
+        inputTitle.setHintTextColor(Color.GRAY);
+        inputUrl.setTextColor(Color.BLACK);
+        inputUrl.setHintTextColor(Color.GRAY);
 
-        root.addView(etTitle);
-        root.addView(etUrl);
+        layout.addView(inputTitle);
+        layout.addView(createSpace(15));
+        layout.addView(inputUrl);
+        layout.addView(createSpace(20));
 
-        // 3. 리스트 영역 (화면 남은 공간 꽉 채우기)
-        TextView listHeader = new TextView(this);
-        listHeader.setText("▼ 현재 스케줄 목록 (시간순)");
-        listHeader.setPadding(0, 20, 0, 10);
-        root.addView(listHeader);
+        LinearLayout inputActionLayout = new LinearLayout(this);
+        inputActionLayout.setOrientation(LinearLayout.HORIZONTAL);
 
-        ScrollView sv = new ScrollView(this);
-        LinearLayout.LayoutParams svParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0);
-        svParams.weight = 1; // [핵심] 남은 공간 모두 차지
-        sv.setLayoutParams(svParams);
+        btnTimeSelect[0] = new Button(this);
+        btnTimeSelect[0].setText("시간 선택 (터치)");
+        btnTimeSelect[0].setBackgroundColor(Color.parseColor("#EEEEEE"));
+        btnTimeSelect[0].setTextColor(Color.BLACK);
+        LinearLayout.LayoutParams timeParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.5f);
+        btnTimeSelect[0].setLayoutParams(timeParams);
+        btnTimeSelect[0].setOnClickListener(v -> {
+            Calendar mcurrentTime = Calendar.getInstance();
+            int hour = mcurrentTime.get(Calendar.HOUR_OF_DAY);
+            int minute = mcurrentTime.get(Calendar.MINUTE);
+            TimePickerDialog mTimePicker = new TimePickerDialog(this, (timePicker, selectedHour, selectedMinute) -> {
+                selectedTime[0] = selectedHour;
+                selectedTime[1] = selectedMinute;
+                btnTimeSelect[0].setText(String.format(Locale.getDefault(), "%02d:%02d", selectedHour, selectedMinute));
+            }, hour, minute, false);
+            mTimePicker.setTitle("시간 선택");
+            mTimePicker.show();
+        });
+
+        Button btnAdd = new Button(this);
+        btnAdd.setText("➕ 추가");
+        btnAdd.setBackgroundColor(Color.parseColor("#2979FF"));
+        btnAdd.setTextColor(Color.WHITE);
+        LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        addParams.setMargins(20, 0, 0, 0);
+        btnAdd.setLayoutParams(addParams);
 
         LinearLayout listContainer = new LinearLayout(this);
         listContainer.setOrientation(LinearLayout.VERTICAL);
-        sv.addView(listContainer);
-        root.addView(sv);
 
-        final Runnable[] updateList = new Runnable[1];
-        updateList[0] = () -> {
-            listContainer.removeAllViews();
-            temp.sort(Comparator.comparingInt(o -> o.hour));
-            for (ScheduleItem item : temp) {
-                final ScheduleItem cur = item;
-
-                LinearLayout r = new LinearLayout(this);
-                r.setOrientation(LinearLayout.HORIZONTAL);
-                r.setGravity(Gravity.CENTER_VERTICAL);
-                r.setPadding(0, 10, 0, 10);
-
-                TextView tv = new TextView(this);
-                tv.setText(String.format(Locale.KOREA, "[%02d시] %s", cur.hour, cur.title));
-                tv.setTextSize(16);
-                tv.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-                Button del = new Button(this);
-                del.setText("삭제");
-                del.setTextSize(12);
-                del.setOnClickListener(v -> { temp.remove(cur); updateList[0].run(); });
-
-                r.addView(tv);
-                r.addView(del);
-                listContainer.addView(r);
+        btnAdd.setOnClickListener(v -> {
+            if(selectedTime[0] == -1 || inputTitle.getText().toString().isEmpty() || inputUrl.getText().toString().isEmpty()) {
+                Toast.makeText(this, "시간, 제목, URL을 입력하세요.", Toast.LENGTH_SHORT).show();
+                return;
             }
-        };
-        updateList[0].run();
+            scheduleList.add(new ScheduleItem(selectedTime[0], selectedTime[1], inputTitle.getText().toString(), inputUrl.getText().toString()));
+            sortScheduleList();
+            saveScheduleData();
 
-        add.setOnClickListener(v -> {
-            int h = parseHour(etHour.getText().toString().trim());
-            String t = etTitle.getText().toString().trim();
-            String u = etUrl.getText().toString().trim();
+            inputTitle.setText(""); inputUrl.setText("");
+            btnTimeSelect[0].setText("시간 선택 (터치)");
+            selectedTime[0] = -1; selectedTime[1] = -1;
 
-            if (h < 0 || h > 23) { Toast.makeText(this, "시간은 0~23 사이 입력", Toast.LENGTH_SHORT).show(); return; }
-            if (TextUtils.isEmpty(t) || TextUtils.isEmpty(u)) { Toast.makeText(this, "제목과 URL을 입력하세요", Toast.LENGTH_SHORT).show(); return; }
-
-            for (int i = temp.size() - 1; i >= 0; i--) if (temp.get(i).hour == h) temp.remove(i);
-            temp.add(new ScheduleItem(h, t, u));
-            updateList[0].run();
+            refreshScheduleList(listContainer);
             Toast.makeText(this, "추가되었습니다.", Toast.LENGTH_SHORT).show();
         });
 
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setView(root)
-                .setNegativeButton("닫기 (취소)", null)
-                .setPositiveButton("저장 및 적용", (d, w) -> {
-                    saveScheduleToPrefs(temp);
-                    loadTargetVideoFromSchedule();
-                })
-                .create();
+        inputActionLayout.addView(btnTimeSelect[0]);
+        inputActionLayout.addView(btnAdd);
+        layout.addView(inputActionLayout);
+        layout.addView(createSpace(30));
 
-        dialog.setOnDismissListener(d -> {
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-            isLandscape = true;
-        });
+        TextView listHeader = new TextView(this);
+        listHeader.setText("▼ 스케줄 목록");
+        listHeader.setTypeface(null, Typeface.BOLD);
+        listHeader.setTextSize(16);
+        listHeader.setTextColor(Color.DKGRAY);
+        layout.addView(listHeader);
+        layout.addView(createSpace(10));
 
-        dialog.show();
+        layout.addView(listContainer);
+        refreshScheduleList(listContainer);
 
-        // [중요] 다이얼로그 크기를 전체 화면으로 확장
-        try {
-            if (dialog.getWindow() != null) {
-                dialog.getWindow().setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+        scrollView.addView(layout);
+        builder.setView(scrollView);
+        builder.setPositiveButton("닫기", null);
+
+        AlertDialog dialog = builder.create();
+        dialog.setOnDismissListener(dialogInterface -> {
+            if (webView != null) {
+                checkAndApplyOrientation(webView.getUrl());
             }
-        } catch (Exception ignored) {}
+        });
+        dialog.show();
     }
 
-    private int parseHour(String s) { try { return Integer.parseInt(s); } catch (Exception e) { return -1; } }
+    private void refreshScheduleList(LinearLayout container) {
+        container.removeAllViews();
+        for (int i = 0; i < scheduleList.size(); i++) {
+            final int index = i;
+            ScheduleItem item = scheduleList.get(i);
 
-    private View space(int dp) {
-        View v = new View(this);
-        v.setLayoutParams(new LinearLayout.LayoutParams(dpToPx(dp), 1));
-        return v;
-    }
+            LinearLayout itemRow = new LinearLayout(this);
+            itemRow.setOrientation(LinearLayout.HORIZONTAL);
+            itemRow.setPadding(0, 15, 0, 15);
+            itemRow.setGravity(Gravity.CENTER_VERTICAL);
+            itemRow.setBackgroundColor(Color.parseColor("#FAFAFA"));
 
-    private int dpToPx(int dp) {
-        float d = getResources().getDisplayMetrics().density;
-        return Math.round(dp * d);
-    }
+            TextView itemText = new TextView(this);
+            itemText.setText(String.format(Locale.getDefault(), "⏰ %02d:%02d | %s", item.hour, item.minute, item.title));
+            itemText.setTextColor(Color.BLACK);
+            itemText.setTextSize(15);
+            itemText.setTypeface(null, Typeface.BOLD);
+            LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            itemText.setLayoutParams(textParams);
 
-    private Button makeSmallPresetBtn(String text, int sp) {
-        Button b = new Button(this);
-        b.setAllCaps(false);
-        b.setText(text);
-        b.setTextSize(sp);
-        b.setPadding(10, 5, 10, 5);
-        b.setMinHeight(0);
-        b.setMinimumHeight(0);
-        return b;
-    }
+            Button btnDelete = new Button(this);
+            btnDelete.setText("삭제");
+            btnDelete.setTextSize(13);
+            btnDelete.setTextColor(Color.RED);
+            btnDelete.setBackgroundColor(Color.parseColor("#FFEBEE"));
+            btnDelete.setPadding(20, 0, 20, 0);
 
-    private void showPanelForce() {
-        if (controlPanel == null) return;
-        handler.removeCallbacks(hideRunnable);
-        controlPanel.bringToFront();
-        controlPanel.setVisibility(View.VISIBLE);
+            btnDelete.setOnClickListener(v -> {
+                scheduleList.remove(index);
+                saveScheduleData();
+                refreshScheduleList(container);
+            });
 
-        AlphaAnimation fade = new AlphaAnimation(0.0f, 1.0f);
-        fade.setDuration(160);
-        controlPanel.startAnimation(fade);
+            itemRow.addView(itemText);
+            itemRow.addView(btnDelete);
+            container.addView(itemRow);
 
-        handler.postDelayed(hideRunnable, 4500);
-    }
+            View divider = new View(this);
+            divider.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
+            divider.setBackgroundColor(Color.LTGRAY);
+            container.addView(divider);
+        }
 
-    private void toggleRotation() {
-        if (isLandscape) {
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-            isLandscape = false;
-        } else {
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-            isLandscape = true;
+        if (scheduleList.isEmpty()) {
+            TextView emptyView = new TextView(this);
+            emptyView.setText("목록이 없습니다. 앱을 재실행하면 기본값이 복구됩니다.");
+            emptyView.setTextColor(Color.GRAY);
+            emptyView.setGravity(Gravity.CENTER);
+            emptyView.setPadding(0, 20, 0, 20);
+            container.addView(emptyView);
         }
     }
 
-    @SuppressLint("ClickableViewAccessibility")
-    private void enableTouchAsMouseHover() {
-        if (webview == null) return;
+    private Button createStyledButton(String text, String colorHex, View.OnClickListener listener) {
+        Button btn = new Button(this);
+        btn.setText(text);
+        btn.setBackgroundColor(Color.parseColor(colorHex));
+        btn.setTextColor(Color.WHITE);
+        btn.setTextSize(12);
+        btn.setTypeface(null, Typeface.BOLD);
+        btn.setSingleLine(true);
+        btn.setEllipsize(TextUtils.TruncateAt.END);
+        btn.setPadding(5, 0, 5, 0);
 
-        webview.setOnTouchListener((v, ev) -> {
-            int a = ev.getActionMasked();
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
+        p.setMargins(5, 0, 5, 0);
+        btn.setLayoutParams(p);
+        btn.setOnClickListener(listener);
+        return btn;
+    }
 
-            if (a == MotionEvent.ACTION_DOWN) {
-                showPanelForce();
+    private View createSpace(int height) {
+        View v = new View(this);
+        v.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, height));
+        return v;
+    }
+    private View createSpaceHorizontal(int width) {
+        View v = new View(this);
+        v.setLayoutParams(new LinearLayout.LayoutParams(width, ViewGroup.LayoutParams.MATCH_PARENT));
+        return v;
+    }
+
+    private void saveScheduleData() {
+        SharedPreferences prefs = getSharedPreferences("SchedulerPrefs", Context.MODE_PRIVATE);
+        SharedPreferences.Editor editor = prefs.edit();
+        JSONArray jsonArray = new JSONArray();
+        for(ScheduleItem item : scheduleList) {
+            try {
+                JSONObject obj = new JSONObject();
+                obj.put("h", item.hour);
+                obj.put("m", item.minute);
+                obj.put("t", item.title);
+                obj.put("u", item.url);
+                jsonArray.put(obj);
+            } catch (Exception e) {}
+        }
+        editor.putString("schedule_json", jsonArray.toString());
+        editor.apply();
+    }
+
+    private void loadScheduleData() {
+        SharedPreferences prefs = getSharedPreferences("SchedulerPrefs", Context.MODE_PRIVATE);
+        String json = prefs.getString("schedule_json", "[]");
+        scheduleList.clear();
+        try {
+            JSONArray jsonArray = new JSONArray(json);
+            if (jsonArray.length() == 0) {
+                scheduleList.add(new ScheduleItem(5, 0, "새벽예배", PRESET1_URL));
+                scheduleList.add(new ScheduleItem(6, 0, "생명의삶", PRESET2_URL));
+                scheduleList.add(new ScheduleItem(8, 0, "성경통독", PRESET3_URL));
+                saveScheduleData();
+            } else {
+                for(int i=0; i<jsonArray.length(); i++) {
+                    JSONObject obj = jsonArray.getJSONObject(i);
+                    scheduleList.add(new ScheduleItem(obj.getInt("h"), obj.getInt("m"), obj.getString("t"), obj.getString("u")));
+                }
             }
+        } catch (Exception e) {
+            scheduleList.add(new ScheduleItem(5, 0, "새벽예배", PRESET1_URL));
+            scheduleList.add(new ScheduleItem(6, 0, "생명의삶", PRESET2_URL));
+            scheduleList.add(new ScheduleItem(8, 0, "성경통독", PRESET3_URL));
+        }
+        sortScheduleList();
+    }
 
-            if (a == MotionEvent.ACTION_DOWN || a == MotionEvent.ACTION_MOVE) {
-                long now = SystemClock.uptimeMillis();
-                if (now - lastHoverInjectMs < HOVER_THROTTLE_MS) return false;
-                lastHoverInjectMs = now;
-
-                float s = webview.getScale();
-                int x = Math.round(ev.getX() / (s <= 0 ? 1f : s));
-                int y = Math.round(ev.getY() / (s <= 0 ? 1f : s));
-
-                String js =
-                        "(function(){"
-                                + "var x=" + x + ",y=" + y + ";"
-                                + "var el=document.elementFromPoint(x,y);"
-                                + "var ts=[el,document,window].filter(Boolean);"
-                                + "function f(t,e){try{t.dispatchEvent(e);}catch(_){}}"
-                                + "try{var pe=new PointerEvent('pointermove',{bubbles:true,clientX:x,clientY:y,pointerId:1,pointerType:'mouse',isPrimary:true});"
-                                + "ts.forEach(function(t){f(t,pe);});}catch(e){}"
-                                + "var mm=new MouseEvent('mousemove',{bubbles:true,clientX:x,clientY:y});"
-                                + "var mo=new MouseEvent('mouseover',{bubbles:true,clientX:x,clientY:y});"
-                                + "ts.forEach(function(t){f(t,mm);f(t,mo);});"
-                                + "})();";
-                webview.evaluateJavascript(js, null);
+    private void sortScheduleList() {
+        Collections.sort(scheduleList, new Comparator<ScheduleItem>() {
+            @Override
+            public int compare(ScheduleItem o1, ScheduleItem o2) {
+                if(o1.hour != o2.hour) return o1.hour - o2.hour;
+                return o1.minute - o2.minute;
             }
-            return false;
         });
+    }
+
+    private void startScheduleChecker() {
+        scheduleCheckHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                Calendar now = Calendar.getInstance();
+                int curHour = now.get(Calendar.HOUR_OF_DAY);
+                int curMin = now.get(Calendar.MINUTE);
+                for(ScheduleItem item : scheduleList) {
+                    if(item.hour == curHour && item.minute == curMin) {
+                        if(!webView.getUrl().equals(item.url)) {
+                            Toast.makeText(MainActivity.this, "스케줄 실행: " + item.title, Toast.LENGTH_LONG).show();
+                            currentTargetUrl = item.url;
+                            webView.loadUrl(item.url);
+                        }
+                    }
+                }
+                scheduleCheckHandler.postDelayed(this, 30000);
+            }
+        }, 5000);
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        if (btnRotate != null && btnRotate.getParent() != null) {
+            ((View) btnRotate.getParent()).bringToFront();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        scheduleCheckHandler.removeCallbacksAndMessages(null);
+        CookieManager.getInstance().flush();
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (customView != null) webView.getWebChromeClient().onHideCustomView();
+        else if (webView.canGoBack()) webView.goBack();
+        else super.onBackPressed();
     }
 }
