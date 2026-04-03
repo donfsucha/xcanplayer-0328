@@ -22,8 +22,6 @@ class FondantWebController(
     var customView: View? = null
     var customViewCallback: WebChromeClient.CustomViewCallback? = null
     var currentSpeed: Float = 1.0f
-
-    // 안드로이드가 결정한 목표 주소와 타입
     private var currentTargetUrl = ""
     private var isBibleMode = true
 
@@ -59,35 +57,24 @@ class FondantWebController(
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
-                customView = view
-                customViewCallback = callback
-                fullscreenContainer.addView(view)
-                fullscreenContainer.visibility = View.VISIBLE
-                webView.visibility = View.GONE
-                onOrientationChangeNeeded()
+                customView = view; customViewCallback = callback
+                fullscreenContainer.addView(view); fullscreenContainer.visibility = View.VISIBLE
+                webView.visibility = View.GONE; onOrientationChangeNeeded()
             }
             override fun onHideCustomView() {
-                fullscreenContainer.removeView(customView)
-                customView = null
-                fullscreenContainer.visibility = View.GONE
-                webView.visibility = View.VISIBLE
-                customViewCallback?.onCustomViewHidden()
-                onOrientationChangeNeeded()
+                fullscreenContainer.removeView(customView); customView = null
+                fullscreenContainer.visibility = View.GONE; webView.visibility = View.VISIBLE
+                customViewCallback?.onCustomViewHidden(); onOrientationChangeNeeded()
             }
         }
 
         webView.webViewClient = object : WebViewClient() {
-            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                super.onPageStarted(view, url, favicon)
-                handleOrientationByUrl(url)
-            }
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                CookieManager.getInstance().flush()
                 handleOrientationByUrl(url)
-                applySpeed()
-                injectTouchMagic()
-                injectMasterBot()
+                applySpeed(); injectTouchMagic()
+                if (url != null && (url.contains("youtube.com") || url.contains("youtu.be"))) injectYouTubeBot()
+                else injectMasterBot()
             }
         }
     }
@@ -95,15 +82,7 @@ class FondantWebController(
     private fun handleOrientationByUrl(url: String?) {
         val activity = webView.context as? Activity ?: return
         if (url == null) return
-
-        val isLogin = listOf("login", "oauth", "auth", "signin", "kakao", "naver", "kauth", "nid").any { url.contains(it, ignoreCase = true) }
-
-        if (isLogin) {
-            if (activity.requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
-                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                onOrientationChangeNeeded()
-            }
-        } else if (url.contains("/series/") || url.contains("/watch") || url.contains("/play")) {
+        if (url.contains("/series/") || url.contains("/watch") || url.contains("/play")) {
             if (activity.requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
                 activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                 onOrientationChangeNeeded()
@@ -117,10 +96,7 @@ class FondantWebController(
         webView.loadUrl(url)
     }
 
-    fun isVideoPage(): Boolean {
-        val url = webView.url ?: return false
-        return url.contains("/series/") || url.contains("/watch") || url.contains("/play")
-    }
+    fun isVideoPage(): Boolean = webView.url?.let { it.contains("/series/") || it.contains("/watch") || it.contains("/play") } ?: false
 
     fun applySpeed() {
         val js = "javascript:(function() { window.androidSpeed = $currentSpeed; if(window.speedInt) clearInterval(window.speedInt); window.speedInt = setInterval(function() { var v = document.querySelector('video'); if(v && v.playbackRate != window.androidSpeed) v.playbackRate = window.androidSpeed; }, 1000); })();"
@@ -132,157 +108,77 @@ class FondantWebController(
         webView.evaluateJavascript(js, null)
     }
 
+    private fun injectYouTubeBot() {
+        val js = "javascript:(function() { if(window.ytBotInt) clearInterval(window.ytBotInt); window.ytBotInt = setInterval(function() { var skip = document.querySelector('.ytp-ad-skip-button, .ytp-skip-ad-button'); if(skip) skip.click(); var fs = document.querySelector('.ytp-fullscreen-button'); if(fs && !(document.fullscreenElement)) fs.click(); var v = document.querySelector('video'); if(v && v.paused && v.currentTime < 1) v.play(); }, 1000); })();"
+        webView.evaluateJavascript(js, null)
+    }
+
     private fun injectMasterBot() {
         val js = """
             javascript:(function() {
               if(window.botInt) clearInterval(window.botInt);
-              window.lastPlayClickTime = 0;
               
-              function triggerClick(el) {
-                if(!el) return false;
-                try {
-                  el.click();
-                  var ev = new MouseEvent('click', {bubbles: true, cancelable: true, view: window});
-                  el.dispatchEvent(ev);
-                  return true;
-                } catch(e){ return false; }
-              }
-
-              document.addEventListener('click', function(e) {
-                  var txt = (e.target.innerText || '').replace(/\s/g, '');
-                  if (txt.includes('로그인') || txt.includes('계정') || txt.includes('카카오') || txt.includes('네이버')) {
-                      if(window.AndroidBot) window.AndroidBot.requestPortrait();
-                  }
-              }, true);
-
               window.botInt = setInterval(function() {
-                var v = document.querySelector('video'); 
-                var now = Date.now(); 
+                var v = document.querySelector('video');
                 var u = window.location.href;
-                
-                var targetUrl = '${currentTargetUrl}';
                 var isBible = ${isBibleMode};
-                
+
                 if (v) {
                   if (window.androidSpeed && v.playbackRate !== window.androidSpeed) v.playbackRate = window.androidSpeed;
-                  if (v.muted) { v.muted = false; v.volume = 1.0; }
+                  v.muted = false;
+                  if (v.paused && v.currentTime < 1.0) {
+                      var p = v.play();
+                      if(p !== undefined) p.catch(function(e){});
+                  }
+                  return; 
                 }
 
-                var cleanU = u.split('?')[0].replace(/\/$/, '');
-                var isHome = (cleanU === 'https://www.fondant.kr' || u.includes('/main'));
-
-                // ★ [수정 핵심] 홈 화면 처리 하이브리드 로직
+                var isHome = (u.split('?')[0].replace(/\/$/, '') === 'https://www.fondant.kr' || u.includes('/main'));
+                
+                // [홈 화면 로직]
                 if (isHome) {
-                    if (now - window.lastPlayClickTime > 4000) {
-                        
-                        // 1. 배너 글자 찾기 먼저 시도
-                        var links = document.querySelectorAll('a');
-                        var clickedUI = false;
-
-                        for(var i=0; i<links.length; i++) {
-                            var txt = (links[i].innerText || '') + (links[i].querySelector('img') ? links[i].querySelector('img').alt : '');
-                            var cleanTxt = txt.replace(/\s/g, '');
-
-                            var isMatch = false;
-                            if (!isBible && cleanTxt.includes('생명의삶')) isMatch = true;
-                            if (isBible && (cleanTxt.includes('성경통독') || cleanTxt.includes('일일통독') || cleanTxt.includes('통독'))) isMatch = true;
-
-                            if(isMatch && links[i].href && links[i].href.includes('/series/')) {
-                                window.location.href = links[i].href;
-                                window.lastPlayClickTime = now;
-                                clickedUI = true;
-                                return;
-                            }
-                        }
-
-                        // 2. 배너를 못 찾았을 때 순간이동하되, "목표 주소가 홈 화면이 아닐 때만" 이동! (무한 로딩 방지)
-                        var isTargetAlsoHome = (targetUrl === 'https://www.fondant.kr' || targetUrl === 'https://www.fondant.kr/' || targetUrl.includes('/main'));
-                        
-                        if (!clickedUI && targetUrl && targetUrl !== '' && !isTargetAlsoHome) {
-                            window.location.href = targetUrl;
-                            window.lastPlayClickTime = now;
-                        }
-                    }
-                }
-
-                // 영상 페이지 판별
-                if (u.includes('/series/') || u.includes('/watch') || u.includes('/play')) {
-                    var tags = document.querySelectorAll('button, a, div, span, p');
-                    
+                    // 성경통독은 전용 URL이 있으므로 바로 이동
                     if (isBible) {
-                        if (v && v.duration > 0 && (v.duration - v.currentTime <= 1.0 || v.ended)) {
-                            for (var i = tags.length - 1; i >= 0; i--) {
-                                var rawTxt = tags[i].innerText || '';
-                                if (rawTxt.length < 30 && rawTxt.replace(/\s/g, '').includes('다음회차')) {
-                                    triggerClick(tags[i]);
-                                    return;
-                                }
-                            }
+                        var targetUrl = '${currentTargetUrl}';
+                        if (targetUrl && !u.includes(targetUrl)) {
+                            window.location.href = targetUrl;
+                            return;
                         }
-
-                        if (!v || v.paused) {
-                            if (now - window.lastPlayClickTime > 4000) { 
-                                var clicked = false;
-                                for (var i = tags.length - 1; i >= 0; i--) {
-                                    var rawTxt = tags[i].innerText || '';
-                                    if (rawTxt.length > 0 && rawTxt.length < 30) {
-                                        var ct = rawTxt.replace(/\s/g, '');
-                                        if (ct.includes('로그인')) {
-                                            if (triggerClick(tags[i])) { if(window.AndroidBot) window.AndroidBot.requestPortrait(); clicked = true; }
-                                        } else if (ct.includes('이어보기') || ct.includes('첫화보기') || ct.includes('재생')) {
-                                            if (triggerClick(tags[i])) clicked = true;
-                                        }
-                                    }
-                                    if(clicked) break;
-                                }
-                                if (clicked) { window.lastPlayClickTime = now; } 
-                                else if (v && v.paused && v.currentTime < 1.0) { var p = v.play(); if(p !== undefined) p.catch(function(e){}); window.lastPlayClickTime = now; }
-                            }
-                        }
-
-                    } else {
-                        // 생명의 삶 전용
-                        if (!v || v.paused) {
-                            if (now - window.lastPlayClickTime > 4000) {
-                                var clicked = false;
-                                
-                                for (var i = tags.length - 1; i >= 0; i--) {
-                                    if ((tags[i].innerText || '').replace(/\s/g, '').includes('로그인')) {
-                                        if (triggerClick(tags[i])) { if(window.AndroidBot) window.AndroidBot.requestPortrait(); clicked = true; break; }
-                                    }
-                                }
-
-                                if (!clicked && !u.includes('/watch') && !u.includes('/play')) {
-                                    window.scrollBy(0, 600); 
-                                    var links = document.querySelectorAll('a');
-                                    var foundUrl = null;
-
-                                    for (var i = 0; i < links.length; i++) {
-                                        var h = links[i].href || '';
-                                        if (h.includes('/watch') || h.includes('/play')) {
-                                            var rect = links[i].getBoundingClientRect();
-                                            var absoluteY = rect.top + window.scrollY;
-
-                                            if (absoluteY > 400 && rect.width > 0 && rect.height > 0) {
-                                                foundUrl = h; 
-                                                break; 
-                                            }
-                                        }
-                                    }
-
-                                    if (foundUrl) {
-                                        window.location.href = foundUrl;
-                                        window.lastPlayClickTime = now;
-                                    }
-                                } else if (!clicked && v && v.paused && v.currentTime < 1.0) {
-                                    var p = v.play(); if(p !== undefined) p.catch(function(e){});
-                                    window.lastPlayClickTime = now;
-                                }
+                    } 
+                    // 생명의삶은 홈 화면에서 배너를 찾아야 함
+                    else {
+                        var links = document.querySelectorAll('a');
+                        for (var i = 0; i < links.length; i++) {
+                            var img = links[i].querySelector('img');
+                            var txt = (links[i].innerText || '') + (img ? img.alt : '');
+                            if (txt.replace(/\s/g, '').includes('생명의삶')) {
+                                if (links[i].href) { window.location.href = links[i].href; return; }
                             }
                         }
                     }
                 }
-              }, 1500);
+
+                // [상세/재생 페이지 로직]
+                if (u.includes('/series/') || u.includes('/watch') || u.includes('/play')) {
+                    var links = document.querySelectorAll('a');
+                    for (var i = 0; i < links.length; i++) {
+                        var el = links[i];
+                        var txt = (el.innerText || '').replace(/\s/g, '');
+                        
+                        if (txt.includes('로그인')) {
+                            if(window.AndroidBot) window.AndroidBot.requestPortrait();
+                            el.click(); return;
+                        }
+
+                        // 이어보기, 재생, 최신영상 등 발견 시 순간이동
+                        if (txt.includes('이어') || txt.includes('계속') || txt.includes('최신') || txt.includes('재생') || txt.includes('오늘') || txt.includes('1편')) {
+                            if (el.href && !el.href.includes('javascript')) {
+                                window.location.href = el.href; return;
+                            }
+                        }
+                    }
+                }
+              }, 2000);
             })();
         """.trimIndent()
         webView.evaluateJavascript(js, null)

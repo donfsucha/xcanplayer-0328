@@ -13,7 +13,7 @@ data class ScheduleItem(val hour: Int, val minute: Int, val title: String, val u
 
 class LocalStore(context: Context) {
     // 과거 유튜브 찌꺼기 삭제를 위해 v3 저장소 사용
-    private val prefs = context.getSharedPreferences("SchedulerPrefs_v3", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences("SchedulerPrefs_v4", Context.MODE_PRIVATE)
 
     fun loadSchedule(): MutableList<ScheduleItem> {
         val list = mutableListOf<ScheduleItem>()
