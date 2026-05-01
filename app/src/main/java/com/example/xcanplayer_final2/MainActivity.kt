@@ -28,9 +28,11 @@ class MainActivity : AppCompatActivity() {
 
     private var scheduleList = mutableListOf<ScheduleItem>()
     private val scheduleCheckHandler = Handler(Looper.getMainLooper())
-    private var lastExecutedTime = ""
 
-    // ★ [핵심 추가] 팝업창에서 스케줄을 건드렸는지 감시하는 센서
+    // 마지막으로 실제 적용한 URL
+    private var lastAppliedUrl = ""
+
+    // 스케줄 팝업에서 수정 여부
     private var isScheduleModified = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -46,12 +48,15 @@ class MainActivity : AppCompatActivity() {
 
         immersiveHelper = ImmersiveModeHelper(window, window.decorView)
         localStore = LocalStore(this)
-        scheduleList = localStore.loadSchedule()
+
+        scheduleList = localStore.loadSchedule().toMutableList()
+        scheduleList.sortWith(compareBy<ScheduleItem> { it.hour }.thenBy { it.minute })
 
         scheduleUiController = ScheduleUiController(this, localStore) { updatedList ->
             scheduleList.clear()
             scheduleList.addAll(updatedList)
-            isScheduleModified = true // 스케줄이 추가/삭제되면 센서 작동!
+            scheduleList.sortWith(compareBy<ScheduleItem> { it.hour }.thenBy { it.minute })
+            isScheduleModified = true
         }
 
         webController = FondantWebController(webView, fullscreenContainer) {
@@ -61,10 +66,21 @@ class MainActivity : AppCompatActivity() {
         webController.setupWebView()
         setupButtons()
 
-        val initialUrl = getUrlForCurrentTime()
-        webController.loadSmartUrl(initialUrl)
+        // 첫 실행 시 너무 빨리 붙지 않도록 약간 지연 후 현재 시간대 스케줄 적용
+        webView.postDelayed({
+            applyScheduleNow(force = true, showToast = false)
+        }, 1200L)
 
         startScheduleChecker()
+    }
+
+    override fun onResume() {
+        super.onResume()
+
+        // 앱 복귀 시에도 현재 시간대 기준으로 다시 확인
+        webView.postDelayed({
+            applyScheduleNow(force = false, showToast = false)
+        }, 500L)
     }
 
     private fun checkAndApplyOrientation() {
@@ -83,43 +99,68 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupButtons() {
         btnSpeed.setOnClickListener {
-            webController.currentSpeed = if (webController.currentSpeed >= 2.0f) 1.0f else webController.currentSpeed + 0.25f
+            webController.currentSpeed =
+                if (webController.currentSpeed >= 2.0f) 1.0f
+                else webController.currentSpeed + 0.25f
+
             btnSpeed.text = "${webController.currentSpeed}x"
             webController.applySpeed()
         }
+
         btnRotate.setOnClickListener {
-            requestedOrientation = if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            } else {
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            }
+            requestedOrientation =
+                if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                    ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                } else {
+                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                }
         }
 
         btnSchedule.setOnClickListener {
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             immersiveHelper.applyImmersiveMode(false)
-            isScheduleModified = false // 팝업 열 때는 센서 초기화
+            isScheduleModified = false
 
             scheduleUiController.showScheduleDialog(scheduleList) {
                 checkAndApplyOrientation()
-                // ★ [핵심 해결] 팝업 닫을 때, 스케줄이 지워지거나 추가됐으면 화면을 '즉시' 새 스케줄에 맞춰 이동!
+
                 if (isScheduleModified) {
-                    val newUrl = getUrlForCurrentTime()
-                    webController.loadSmartUrl(newUrl)
-                    Toast.makeText(this@MainActivity, "변경된 스케줄에 맞춰 화면을 이동합니다.", Toast.LENGTH_SHORT).show()
+                    applyScheduleNow(force = true, showToast = true)
                 }
             }
         }
     }
 
+    private fun applyScheduleNow(force: Boolean, showToast: Boolean) {
+        val targetUrl = getUrlForCurrentTime()
+        if (targetUrl.isBlank()) return
+
+        if (!force && normalizeUrl(targetUrl) == normalizeUrl(lastAppliedUrl)) {
+            return
+        }
+
+        lastAppliedUrl = targetUrl
+        webController.loadSmartUrl(targetUrl)
+
+        if (showToast) {
+            Toast.makeText(this, "현재 시간대 스케줄로 이동합니다.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun getUrlForCurrentTime(): String {
         if (scheduleList.isEmpty()) return FondantDefaults.QT_URL
+
         val now = Calendar.getInstance()
         val curMinutes = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
 
         var matchedUrl = scheduleList.last().url
         for (item in scheduleList) {
-            if (item.hour * 60 + item.minute <= curMinutes) matchedUrl = item.url else break
+            val itemMinutes = item.hour * 60 + item.minute
+            if (itemMinutes <= curMinutes) {
+                matchedUrl = item.url
+            } else {
+                break
+            }
         }
         return matchedUrl
     }
@@ -127,24 +168,15 @@ class MainActivity : AppCompatActivity() {
     private fun startScheduleChecker() {
         scheduleCheckHandler.postDelayed(object : Runnable {
             override fun run() {
-                val now = Calendar.getInstance()
-                val curHour = now.get(Calendar.HOUR_OF_DAY)
-                val curMin = now.get(Calendar.MINUTE)
-
-                for (item in scheduleList) {
-                    if (item.hour == curHour && item.minute == curMin) {
-                        val timeKey = String.format(Locale.getDefault(), "%02d:%02d", curHour, curMin)
-                        if (timeKey != lastExecutedTime) {
-                            lastExecutedTime = timeKey
-                            Toast.makeText(this@MainActivity, "${item.title} 스케줄 강제 실행!", Toast.LENGTH_LONG).show()
-                            webController.loadSmartUrl(item.url)
-                        }
-                        break
-                    }
-                }
-                scheduleCheckHandler.postDelayed(this, 10000)
+                // "지금 시간대" 기준으로 계속 재판단
+                applyScheduleNow(force = false, showToast = false)
+                scheduleCheckHandler.postDelayed(this, 15000L)
             }
-        }, 5000)
+        }, 5000L)
+    }
+
+    private fun normalizeUrl(url: String): String {
+        return url.trim().removeSuffix("/")
     }
 
     override fun onPause() {
@@ -152,9 +184,18 @@ class MainActivity : AppCompatActivity() {
         CookieManager.getInstance().flush()
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        scheduleCheckHandler.removeCallbacksAndMessages(null)
+    }
+
     override fun onBackPressed() {
-        if (webController.customView != null) webController.customViewCallback?.onCustomViewHidden()
-        else if (webView.canGoBack()) webView.goBack()
-        else super.onBackPressed()
+        if (webController.customView != null) {
+            webController.customViewCallback?.onCustomViewHidden()
+        } else if (webView.canGoBack()) {
+            webView.goBack()
+        } else {
+            super.onBackPressed()
+        }
     }
 }
